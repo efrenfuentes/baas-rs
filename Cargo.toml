@@ -1,5 +1,3 @@
 [workspace]
-members = [
-    "baas",
-    "collections"
-]
+resolver = "2"
+members = ["baas", "collections"]

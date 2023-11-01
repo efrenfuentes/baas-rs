@@ -1,4 +1,4 @@
-use crate::field::{Field, Fields, FieldType, SystemField, FieldOptions};
+use crate::field::{Field, FieldOptions, FieldType, Fields, SystemField};
 
 pub struct Schema {
     pub table_name: String,
@@ -20,7 +20,7 @@ impl Schema {
     pub fn new() -> Schema {
         Schema {
             table_name: "".to_string(),
-            fields: vec![]
+            fields: vec![],
         }
     }
 
@@ -104,21 +104,14 @@ impl Schema {
         let mut sql = format!("CREATE TABLE {} (", self.table_name);
         let mut constraints: Vec<String> = vec![];
 
-        for field in SystemField::iterator() {
-            sql.push_str(&field.to_sql());
-            sql.push_str(", ");
-        }
+        sql.push_str(&Self::system_fields_sql());
 
         for (index, field) in self.fields.iter().enumerate() {
             sql.push_str(&field.to_sql());
 
-            match field.options {
-                Some(ref options) => {
-                    if options.unique {
-                        constraints.push(format!("CONSTRAINT {}_{}_key UNIQUE ({})", self.table_name, field.name, field.name));
-                    }
-                },
-                None => {}
+            if let Some(constraints_sql) = self.unique_constraints_sql(field, field.options.clone())
+            {
+                constraints.push(constraints_sql);
             }
 
             if index < self.fields.len() - 1 {
@@ -126,7 +119,7 @@ impl Schema {
             }
         }
 
-        if constraints.len() > 0 {
+        if !constraints.is_empty() {
             sql.push_str(", ");
             sql.push_str(&constraints.join(", "));
         }
@@ -134,6 +127,34 @@ impl Schema {
         sql.push_str(");");
 
         sql
+    }
+
+    fn system_fields_sql() -> String {
+        let mut sql = String::new();
+
+        for field in SystemField::iterator() {
+            sql.push_str(&field.to_sql());
+            sql.push_str(", ");
+        }
+
+        sql
+    }
+
+    fn unique_constraints_sql(
+        &self,
+        field: &Field,
+        options: Option<FieldOptions>,
+    ) -> Option<String> {
+        if let Some(ref options) = options {
+            if options.unique {
+                return Some(format!(
+                    "CONSTRAINT {}_{}_key UNIQUE ({})",
+                    self.table_name, field.name, field.name
+                ));
+            }
+        }
+
+        None
     }
 }
 
@@ -176,7 +197,9 @@ impl SchemaBuilder {
     /// assert_eq!(schema.fields.len(), 0);
     /// ```
     pub fn new() -> SchemaBuilder {
-        SchemaBuilder { schema: Schema::new() }
+        SchemaBuilder {
+            schema: Schema::new(),
+        }
     }
 
     /// Set the table name for the schema.
@@ -213,7 +236,12 @@ impl SchemaBuilder {
     ///
     /// assert_eq!(schema.fields.len(), 2);
     /// ```
-    pub fn with_field(mut self, name: &str, type_: FieldType, options: Option<FieldOptions>) -> Self {
+    pub fn with_field(
+        mut self,
+        name: &str,
+        type_: FieldType,
+        options: Option<FieldOptions>,
+    ) -> Self {
         self.schema.add_field(name, type_, options);
         self
     }
