@@ -1,4 +1,4 @@
-use crate::field::{Field, Fields, FieldType, SystemField, FieldOptions};
+use crate::field::{Field, FieldOptions, FieldType, Fields, SystemField};
 
 pub struct Schema {
     pub table_name: String,
@@ -15,12 +15,22 @@ impl Schema {
     ///
     /// let schema = Schema::new();
     ///
+    /// assert_eq!(schema.table_name, "");
+    /// assert_eq!(schema.fields.len(), 0);
+    /// ```
+    ///
+    /// /// ```
+    /// use collections::schema::Schema;
+    ///
+    /// let schema = Schema::default();
+    ///
+    /// assert_eq!(schema.table_name, "");
     /// assert_eq!(schema.fields.len(), 0);
     /// ```
     pub fn new() -> Schema {
         Schema {
             table_name: "".to_string(),
-            fields: vec![]
+            fields: vec![],
         }
     }
 
@@ -48,9 +58,18 @@ impl Schema {
     ///
     /// let mut schema = Schema::new();
     ///
-    /// schema.add_field("id", FieldType::Char, None);
+    /// schema.add_field("id", FieldType::UUID, None);
+    /// schema.add_field("inserted_at", FieldType::Timestamp, None);
+    /// schema.add_field("updated_at", FieldType::Timestamp, None);
+    /// schema.add_field("name", FieldType::Char, None);
+    /// schema.add_field("age", FieldType::Integer, None);
     ///
-    /// assert_eq!(schema.fields.len(), 0);
+    /// assert_eq!(schema.fields.len(), 2);
+    /// assert_eq!(schema.fields[0].name, "name");
+    /// assert_eq!(schema.fields[0].type_, FieldType::Char);
+    /// assert_eq!(schema.fields[1].name, "age");
+    /// assert_eq!(schema.fields[1].type_, FieldType::Integer);
+    ///
     /// ```
     pub fn add_field(&mut self, name: &str, type_: FieldType, options: Option<FieldOptions>) {
         // check name is not a system field
@@ -104,21 +123,14 @@ impl Schema {
         let mut sql = format!("CREATE TABLE {} (", self.table_name);
         let mut constraints: Vec<String> = vec![];
 
-        for field in SystemField::iterator() {
-            sql.push_str(&field.to_sql());
-            sql.push_str(", ");
-        }
+        sql.push_str(&Self::system_fields_sql());
 
         for (index, field) in self.fields.iter().enumerate() {
             sql.push_str(&field.to_sql());
 
-            match field.options {
-                Some(ref options) => {
-                    if options.unique {
-                        constraints.push(format!("CONSTRAINT {}_{}_key UNIQUE ({})", self.table_name, field.name, field.name));
-                    }
-                },
-                None => {}
+            if let Some(constraints_sql) = self.unique_constraints_sql(field, field.options.clone())
+            {
+                constraints.push(constraints_sql);
             }
 
             if index < self.fields.len() - 1 {
@@ -126,7 +138,7 @@ impl Schema {
             }
         }
 
-        if constraints.len() > 0 {
+        if !constraints.is_empty() {
             sql.push_str(", ");
             sql.push_str(&constraints.join(", "));
         }
@@ -134,6 +146,34 @@ impl Schema {
         sql.push_str(");");
 
         sql
+    }
+
+    fn system_fields_sql() -> String {
+        let mut sql = String::new();
+
+        for field in SystemField::iterator() {
+            sql.push_str(&field.to_sql());
+            sql.push_str(", ");
+        }
+
+        sql
+    }
+
+    fn unique_constraints_sql(
+        &self,
+        field: &Field,
+        options: Option<FieldOptions>,
+    ) -> Option<String> {
+        if let Some(ref options) = options {
+            if options.unique {
+                return Some(format!(
+                    "CONSTRAINT {}_{}_key UNIQUE ({})",
+                    self.table_name, field.name, field.name
+                ));
+            }
+        }
+
+        None
     }
 }
 
@@ -176,7 +216,9 @@ impl SchemaBuilder {
     /// assert_eq!(schema.fields.len(), 0);
     /// ```
     pub fn new() -> SchemaBuilder {
-        SchemaBuilder { schema: Schema::new() }
+        SchemaBuilder {
+            schema: Schema::new(),
+        }
     }
 
     /// Set the table name for the schema.
@@ -213,12 +255,35 @@ impl SchemaBuilder {
     ///
     /// assert_eq!(schema.fields.len(), 2);
     /// ```
-    pub fn with_field(mut self, name: &str, type_: FieldType, options: Option<FieldOptions>) -> Self {
+    pub fn with_field(
+        mut self,
+        name: &str,
+        type_: FieldType,
+        options: Option<FieldOptions>,
+    ) -> Self {
         self.schema.add_field(name, type_, options);
         self
     }
 
     /// Build the schema.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use collections::schema::SchemaBuilder;
+    /// use collections::field::FieldType;
+    /// use collections::field::FieldOptions;
+    ///
+    /// let schema = SchemaBuilder::new()
+    ///     .with_table_name("users")
+    ///     .with_field("name", FieldType::Char, Some(FieldOptions::new(true, true, None)))
+    ///     .with_field("age", FieldType::Integer, Some(FieldOptions::new(false, false, Some(5.to_string()))))
+    ///     .build();
+    ///
+    /// let sql_expected = "CREATE TABLE users (id UUID PRIMARY KEY DEFAULT gen_random_uuid(), inserted_at TIMESTAMP without time zone NOT NULL, updated_at TIMESTAMP without time zone NOT NULL, name VARCHAR(255) NOT NULL, age BIGINT DEFAULT 5, CONSTRAINT users_name_key UNIQUE (name));";
+    ///
+    /// assert_eq!(schema.to_sql(), sql_expected);
+    ///
     pub fn build(self) -> Schema {
         self.schema
     }
